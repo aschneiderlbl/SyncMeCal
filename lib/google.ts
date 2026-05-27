@@ -34,8 +34,13 @@ export async function googleClientForUser(userId: string) {
       : undefined,
   });
 
+  type RefreshedTokens = {
+    access_token?: string | null;
+    refresh_token?: string | null;
+    expiry_date?: number | null;
+  };
   // Persist refreshed tokens back to the DB.
-  oauth2.on("tokens", async (tokens) => {
+  oauth2.on("tokens", async (tokens: RefreshedTokens) => {
     await svc
       .from("profiles")
       .update({
@@ -73,8 +78,9 @@ export async function getFreeBusy(
     },
   });
 
-  const busy = resp.data.calendars?.primary?.busy ?? [];
+  type RawBusy = { start?: string | null; end?: string | null };
+  const busy: RawBusy[] = resp.data.calendars?.primary?.busy ?? [];
   return busy
-    .filter((b): b is { start: string; end: string } => !!b.start && !!b.end)
-    .map((b) => ({ start: b.start, end: b.end }));
+    .filter((b: RawBusy): b is { start: string; end: string } => !!b.start && !!b.end)
+    .map((b: { start: string; end: string }) => ({ start: b.start, end: b.end }));
 }
