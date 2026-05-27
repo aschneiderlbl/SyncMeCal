@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+:root { color-scheme: light; }
+
+html, body { background: #F5F7FA; color: #111827; }
+body { font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+/* Reusable button styles that match the design tokens */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-weight: 600; padding: 12px 18px; border-radius: 12px;
+  min-height: 44px; transition: transform .15s, background .15s, box-shadow .15s;
+}
+.btn-primary {
+  background: #22C55E; color: white;
+  box-shadow: 0 4px 0 #16A34A;
+}
+.btn-primary:hover { background: #16A34A; }
+.btn-primary:active { transform: translateY(2px); box-shadow: 0 2px 0 #16A34A; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-secondary {
+  background: #FFFFFF; color: #2563EB; border: 1.5px solid #DBEAFE;
+}
+.btn-secondary:hover { background: #DBEAFE; }
+
+.card {
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(17,24,39,.06);
+}
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+  background: #DBEAFE; color: #2563EB;
+}
+.pill-green { background: #DCFCE7; color: #16A34A; }
+.pill-amber { background: #FEF3C7; color: #B45309; }
+.pill-grey  { background: #F3F4F6; color: #6B7280; }
