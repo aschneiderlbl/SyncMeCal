@@ -146,7 +146,11 @@ export default function ComposePage() {
 
           <section className="mt-6">
             <h3 className="font-semibold mb-2">Proposed times</h3>
-            <p className="text-sm text-ink-secondary">3 windows when your cal's clear.</p>
+            <p className="text-sm text-ink-secondary">
+              {options.length === 0
+                ? "No windows are clear across all your calendars in that range."
+                : `${options.length} ${options.length === 1 ? "window" : "windows"} when your cal's clear.`}
+            </p>
             <div className="space-y-2 mt-3">
               {options.map((o, i) => (
                 <div key={i} className="card flex items-center gap-3">
