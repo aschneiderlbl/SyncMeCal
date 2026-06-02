@@ -5,7 +5,12 @@ import { parsePromptWithClaude } from "@/lib/parsePrompt";
 import { getFreeBusy } from "@/lib/google";
 import { generateOptions } from "@/lib/generateOptions";
 
-const BodySchema = z.object({ prompt: z.string().min(2).max(500) });
+const BodySchema = z.object({
+  prompt: z.string().min(2).max(500),
+  // IANA timezone of the client (e.g. "America/Chicago"). Falls back to UTC if
+  // the client doesn't send it — older clients won't break.
+  tz: z.string().min(1).max(64).optional(),
+});
 
 /**
  * POST /api/generate-options
@@ -56,7 +61,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const options = generateOptions(parsed, busy, 3);
+  const tz = body.data.tz ?? "UTC";
+  const options = generateOptions(parsed, busy, 3, tz);
 
-  return NextResponse.json({ parsed, options, busy_count: busy.length });
+  return NextResponse.json({ parsed, options, busy_count: busy.length, tz });
 }

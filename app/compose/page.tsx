@@ -27,10 +27,13 @@ export default function ComposePage() {
     setError(null);
     setStep("thinking");
     try {
+      // Send the user's IANA timezone so the server constructs slot times in
+      // the right wall-clock instead of UTC (Vercel runs in UTC).
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const r = await fetch("/api/generate-options", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, tz }),
       });
       const json = await r.json();
       if (!r.ok) throw new Error(json.error ?? "Failed to chart course");

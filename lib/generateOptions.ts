@@ -14,27 +14,83 @@ const TIME_WINDOWS: Record<TimeOfDay, [number, number]> = {
 };
 
 /**
+ * Convert a wall-clock time (year, month, day, hour, minute) in the given
+ * IANA timezone to a UTC Date. DST-aware via Intl.DateTimeFormat.
+ *
+ * We need this because on Vercel the JS runtime is UTC, so plain `setHours()`
+ * silently means "set the UTC hour" — which is NOT what we want when the
+ * scheduling algorithm thinks in terms of the user's local clock.
+ */
+function zonedTimeToUtc(
+  year: number,
+  month: number, // 0-indexed (to match Date.UTC)
+  day: number,
+  hour: number,
+  minute: number,
+  tz: string,
+): Date {
+  // Treat the wall-clock components as if they were UTC. Then ask Intl what
+  // that instant LOOKS LIKE in `tz`, and the gap between the two tells us the
+  // tz offset at that instant.
+  const wallAsUtcMs = Date.UTC(year, month, day, hour, minute);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts: Record<string, string> = {};
+  for (const p of dtf.formatToParts(new Date(wallAsUtcMs))) {
+    if (p.type !== "literal") parts[p.type] = p.value;
+  }
+  // Some locales emit "24" for midnight — normalize.
+  const h = parts.hour === "24" ? "00" : parts.hour;
+  const observedMs = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(h),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  // tz offset at this instant, in ms (positive east of UTC).
+  const tzOffsetMs = observedMs - wallAsUtcMs;
+  // The UTC instant whose tz-rendered wall-clock equals what we asked for.
+  return new Date(wallAsUtcMs - tzOffsetMs);
+}
+
+/**
  * Given parsed rules + the user's busy windows over the date range,
  * propose up to N candidate slots.
  *
  * Algorithm (deliberately simple — easy to iterate on):
- *   1. Walk each day in [date_range_start, date_range_end].
+ *   1. Walk each calendar date in [date_range_start, date_range_end].
  *   2. If preferred_days is set, skip days that don't match.
- *   3. Within each day's [winStart, winEnd] hour window, sweep in 15-min steps.
+ *   3. Within each day's [winStart, winEnd] hour window (in the user's tz),
+ *      sweep in 15-min steps.
  *   4. A slot of `duration_minutes` is a candidate if it overlaps no busy window
- *      AND doesn't cross 12:00–13:00 (a soft "don't book over lunch" rule).
- *   5. Score by closeness to the middle of the window + earliness in the date range
- *      (people generally want the soonest reasonable time).
+ *      AND doesn't cross 12:00–13:00 local (a soft "don't book over lunch" rule).
+ *   5. Score by closeness to the middle of the window + earliness in the date range.
  *   6. Return the top N.
  */
 export function generateOptions(
   parsed: ParsedPrompt,
   busy: FreeBusyWindow[],
   N = 3,
+  tz: string = "UTC",
 ): GeneratedOption[] {
-  const start = new Date(parsed.date_range_start + "T00:00:00");
-  const end = new Date(parsed.date_range_end + "T23:59:59");
+  const [sy, sm, sd] = parsed.date_range_start.split("-").map(Number);
+  const [ey, em, ed] = parsed.date_range_end.split("-").map(Number);
+  // Use UTC anchor dates just to iterate calendar dates — the day-of-week of a
+  // calendar date doesn't depend on tz.
+  const startMs = Date.UTC(sy, sm - 1, sd);
+  const endMs = Date.UTC(ey, em - 1, ed);
   const duration = parsed.duration_minutes * 60_000;
+  const durationHours = parsed.duration_minutes / 60;
 
   const [winStart, winEnd] = TIME_WINDOWS[parsed.preferred_time_of_day];
   const allowedDays = new Set(parsed.preferred_days.map((d) => WEEKDAY_INDEX[d]));
@@ -48,34 +104,36 @@ export function generateOptions(
 
   const candidates: { start: Date; end: Date; score: number }[] = [];
 
-  for (let day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
-    if (allowedDays.size > 0 && !allowedDays.has(day.getDay())) continue;
+  for (let ms = startMs; ms <= endMs; ms += 86_400_000) {
+    const cur = new Date(ms);
+    const y = cur.getUTCFullYear();
+    const m = cur.getUTCMonth(); // 0-indexed
+    const d = cur.getUTCDate();
+    const dow = cur.getUTCDay();
 
-    // Sweep 15-min steps from winStart to winEnd - duration.
+    if (allowedDays.size > 0 && !allowedDays.has(dow)) continue;
+
     for (let hour = winStart; hour <= winEnd; hour += 0.25) {
-      const slotStart = new Date(day);
-      slotStart.setHours(Math.floor(hour), (hour % 1) * 60, 0, 0);
-      const slotEnd = new Date(slotStart.getTime() + duration);
-
-      if (slotEnd.getHours() + slotEnd.getMinutes() / 60 > winEnd + 0.5) break;
+      const endHourLocal = hour + durationHours;
+      if (endHourLocal > winEnd + 0.5) break;
 
       // Don't book straight through lunch.
-      const startsBeforeNoon = slotStart.getHours() < 12;
-      const endsAfter1pm = slotEnd.getHours() >= 13;
+      const startsBeforeNoon = hour < 12;
+      const endsAfter1pm = endHourLocal >= 13;
       if (startsBeforeNoon && endsAfter1pm) continue;
+
+      const hh = Math.floor(hour);
+      const mm = Math.round((hour % 1) * 60);
+      const slotStart = zonedTimeToUtc(y, m, d, hh, mm, tz);
+      const slotEnd = new Date(slotStart.getTime() + duration);
 
       if (overlapsBusy(slotStart.getTime(), slotEnd.getTime())) continue;
 
-      // Score: prefer earlier dates (smaller daysFromStart), prefer mid-window times.
-      const daysFromStart = Math.floor(
-        (slotStart.getTime() - start.getTime()) / 86_400_000,
-      );
+      const daysFromStart = Math.floor((ms - startMs) / 86_400_000);
       const midWindow = (winStart + winEnd) / 2;
-      const distFromMid = Math.abs(
-        slotStart.getHours() + slotStart.getMinutes() / 60 - midWindow,
-      );
+      const distFromMid = Math.abs(hour - midWindow);
       const score = daysFromStart * 2 + distFromMid;
-      candidates.push({ start: new Date(slotStart), end: slotEnd, score });
+      candidates.push({ start: slotStart, end: slotEnd, score });
     }
   }
 
@@ -101,17 +159,22 @@ export function generateOptions(
   return picked.map((p) => ({
     starts_at: p.start.toISOString(),
     ends_at: p.end.toISOString(),
-    label: labelFor(p.start, parsed.preferred_time_of_day),
+    label: labelFor(p.start, parsed.preferred_time_of_day, tz),
   }));
 }
 
-function labelFor(d: Date, tod: TimeOfDay): string {
-  const weekday = d.toLocaleDateString("en-US", { weekday: "short" });
-  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function labelFor(d: Date, tod: TimeOfDay, tz: string): string {
+  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: tz });
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: tz,
+  });
   const time = d.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: tz,
   });
   const todTxt =
     tod === "morning" ? "morning"
