@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
       "email",
       "profile",
       "https://www.googleapis.com/auth/calendar.freebusy",
+      // Needed to enumerate every calendar the user has access to so we can
+      // factor non-primary calendars into availability.
+      "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
     ].join(" "),
   );
   url.searchParams.set("access_type", "offline");

@@ -27,11 +27,12 @@ A scheduling app for dads in their late 30s. Type what you want to schedule in p
    - `https://www.googleapis.com/auth/userinfo.email`
    - `https://www.googleapis.com/auth/userinfo.profile`
    - `https://www.googleapis.com/auth/calendar.freebusy`
+   - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
 4. APIs & Services → Credentials → Create OAuth client ID → **Web application**.
    - Authorized JavaScript origins: `http://localhost:3000`
    - Authorized redirect URIs: `https://<your-supabase-project>.supabase.co/auth/v1/callback`
 5. Copy the **Client ID** and **Client secret**. You'll paste these into Supabase AND your `.env.local` — both sides need them. Supabase uses them for the initial OAuth handshake; the app uses them to refresh access tokens server-side when calling FreeBusy.
-6. Back in Supabase → Authentication → Providers → **Google**: enable, paste Client ID + Secret. In the "Additional Scopes" field add: `https://www.googleapis.com/auth/calendar.freebusy`.
+6. Back in Supabase → Authentication → Providers → **Google**: enable, paste Client ID + Secret. In the "Additional Scopes" field add: `https://www.googleapis.com/auth/calendar.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
 
 ### 3. Anthropic
 

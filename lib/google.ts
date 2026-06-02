@@ -58,9 +58,52 @@ export async function googleClientForUser(userId: string) {
 
 export type FreeBusyWindow = { start: string; end: string };
 
+// Google's freebusy endpoint accepts at most 50 calendar items per request.
+const FREEBUSY_BATCH_SIZE = 50;
+
+/**
+ * Enumerate the user's calendars and return the IDs we want to factor into
+ * availability. We include everything in their calendar list EXCEPT calendars
+ * they've explicitly hidden in Google Calendar — hiding is the user's signal
+ * that a calendar shouldn't affect their schedule.
+ *
+ * Requires the `calendar.calendarlist.readonly` scope.
+ */
+async function listUserCalendarIds(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  auth: any,
+): Promise<string[]> {
+  const calendar = google.calendar({ version: "v3", auth });
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const resp = await calendar.calendarList.list({
+      maxResults: 250,
+      showHidden: false,
+      pageToken,
+    });
+    for (const item of resp.data.items ?? []) {
+      if (!item.id) continue;
+      if (item.hidden) continue;
+      ids.push(item.id);
+    }
+    pageToken = resp.data.nextPageToken ?? undefined;
+  } while (pageToken);
+
+  // Safety net: if for some reason calendarList came back empty, fall back to
+  // primary so we still return *something* useful.
+  if (ids.length === 0) ids.push("primary");
+  return ids;
+}
+
 /**
  * Call Google Calendar FreeBusy for `userId` over [timeMin, timeMax].
- * Returns the busy windows on their primary calendar.
+ *
+ * Returns busy windows merged across ALL of the user's calendars (primary,
+ * imported work calendar, shared calendars, etc.) — any calendar that's not
+ * hidden in Google Calendar's UI contributes to the busy set. A slot is
+ * unavailable if *any* calendar reports it as busy.
  */
 export async function getFreeBusy(
   userId: string,
@@ -70,17 +113,60 @@ export async function getFreeBusy(
   const auth = await googleClientForUser(userId);
   const calendar = google.calendar({ version: "v3", auth });
 
-  const resp = await calendar.freebusy.query({
-    requestBody: {
-      timeMin: timeMin.toISOString(),
-      timeMax: timeMax.toISOString(),
-      items: [{ id: "primary" }],
-    },
-  });
+  const calendarIds = await listUserCalendarIds(auth);
 
   type RawBusy = { start?: string | null; end?: string | null };
-  const busy: RawBusy[] = resp.data.calendars?.primary?.busy ?? [];
-  return busy
-    .filter((b: RawBusy): b is { start: string; end: string } => !!b.start && !!b.end)
-    .map((b: { start: string; end: string }) => ({ start: b.start, end: b.end }));
+  const merged: FreeBusyWindow[] = [];
+
+  // FreeBusy accepts up to 50 calendars per request — batch if needed.
+  for (let i = 0; i < calendarIds.length; i += FREEBUSY_BATCH_SIZE) {
+    const batch = calendarIds.slice(i, i + FREEBUSY_BATCH_SIZE);
+    const resp = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+        items: batch.map((id) => ({ id })),
+      },
+    });
+
+    const calendars = resp.data.calendars ?? {};
+    for (const id of batch) {
+      const entry = calendars[id];
+      if (!entry) continue;
+      // Per-calendar errors (e.g. notFound) are surfaced here — skip silently so
+      // one bad calendar doesn't blow up the whole availability check.
+      if (entry.errors && entry.errors.length > 0) continue;
+      const busy: RawBusy[] = entry.busy ?? [];
+      for (const b of busy) {
+        if (b.start && b.end) merged.push({ start: b.start, end: b.end });
+      }
+    }
+  }
+
+  return mergeOverlappingWindows(merged);
+}
+
+/**
+ * Sort + merge overlapping/adjacent busy windows so downstream consumers see a
+ * clean, deduplicated busy timeline.
+ */
+function mergeOverlappingWindows(windows: FreeBusyWindow[]): FreeBusyWindow[] {
+  if (windows.length === 0) return [];
+  const sorted = [...windows].sort(
+    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
+  );
+  const out: FreeBusyWindow[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = out[out.length - 1];
+    const curr = sorted[i];
+    if (new Date(curr.start).getTime() <= new Date(prev.end).getTime()) {
+      // Overlapping or touching — extend prev.end to the later of the two.
+      if (new Date(curr.end).getTime() > new Date(prev.end).getTime()) {
+        prev.end = curr.end;
+      }
+    } else {
+      out.push(curr);
+    }
+  }
+  return out;
 }

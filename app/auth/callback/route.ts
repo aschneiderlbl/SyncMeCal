@@ -57,13 +57,16 @@ export async function GET(request: NextRequest) {
     token_type: string;
   };
 
-  // If the calendar.freebusy scope wasn't granted (user didn't check the box on
+  // If either calendar scope wasn't granted (user didn't check the boxes on
   // Google's consent screen), bounce them back to /login with a friendly code
-  // so the login page can show a guided "check the box this time" flow.
-  if (!tokens.scope?.includes("calendar.freebusy")) {
+  // so the login page can show a guided "check the boxes this time" flow.
+  const grantedScopes = tokens.scope ?? "";
+  const hasFreebusy = grantedScopes.includes("calendar.freebusy");
+  const hasCalendarList = grantedScopes.includes("calendar.calendarlist.readonly");
+  if (!hasFreebusy || !hasCalendarList) {
     console.log(
-      "[oauth callback] calendar.freebusy not granted. Got:",
-      tokens.scope ?? "(none)",
+      "[oauth callback] required calendar scopes not fully granted. Got:",
+      grantedScopes || "(none)",
     );
     return NextResponse.redirect(`${origin}/login?error=calendar_scope_required`);
   }
