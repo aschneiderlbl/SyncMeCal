@@ -139,20 +139,41 @@ export function generateOptions(
 
   candidates.sort((a, b) => a.score - b.score);
 
-  // Greedy pick top N with at least 1 day between picks (variety).
+  // Compute the calendar date (in the user's tz) for a Date, so "same day"
+  // means the same calendar day on the user's clock — not a 24-hour window
+  // that might straddle midnight in their tz.
+  const dateKey = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+
+  // Strict pass: at most one pick per calendar date (in user tz). Most prompts
+  // want variety across days, not multiple options on the same day.
   const picked: { start: Date; end: Date }[] = [];
+  const pickedDates = new Set<string>();
   for (const c of candidates) {
     if (picked.length >= N) break;
-    const tooClose = picked.some(
-      (p) => Math.abs(p.start.getTime() - c.start.getTime()) < 86_400_000,
-    );
-    if (!tooClose) picked.push({ start: c.start, end: c.end });
+    const k = dateKey(c.start);
+    if (pickedDates.has(k)) continue;
+    picked.push({ start: c.start, end: c.end });
+    pickedDates.add(k);
   }
-  // If we don't have N yet (rare — narrow range), top up without the diversity rule.
-  for (const c of candidates) {
-    if (picked.length >= N) break;
-    if (!picked.find((p) => p.start.getTime() === c.start.getTime())) {
-      picked.push({ start: c.start, end: c.end });
+
+  // Top-up: ONLY if the entire candidate pool is on a single calendar date
+  // (e.g. a "find time tomorrow" prompt). Otherwise return fewer options
+  // rather than doubling up days the user already has.
+  if (picked.length < N) {
+    const uniqueDates = new Set(candidates.map((c) => dateKey(c.start)));
+    if (uniqueDates.size <= 1) {
+      for (const c of candidates) {
+        if (picked.length >= N) break;
+        if (!picked.find((p) => p.start.getTime() === c.start.getTime())) {
+          picked.push({ start: c.start, end: c.end });
+        }
+      }
     }
   }
 
