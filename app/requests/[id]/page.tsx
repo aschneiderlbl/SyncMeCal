@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { CopyButtonClient } from "@/components/CopyButtonClient";
+import { ScheduleControls } from "@/components/ScheduleControls";
+import type { Cadence } from "@/lib/types";
 
 export default async function RequestDetailPage({ params }: { params: { id: string } }) {
   const supabase = createSupabaseServer();
@@ -10,11 +12,35 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
 
   const { data: req } = await supabase
     .from("requests")
-    .select("id, prompt, parsed, status, share_token, scheduled_option_id")
+    .select("id, prompt, parsed, status, share_token, scheduled_option_id, schedule_id")
     .eq("id", params.id)
     .single();
 
   if (!req) return notFound();
+
+  // If this request is linked to a schedule, pull its current state so the
+  // ScheduleControls component can render the right UI (status vs picker).
+  let schedule: {
+    id: string;
+    cadence: Cadence;
+    next_run_at: string;
+    enabled: boolean;
+  } | null = null;
+  if (req.schedule_id) {
+    const { data: sched } = await supabase
+      .from("schedules")
+      .select("id, cadence, next_run_at, enabled")
+      .eq("id", req.schedule_id)
+      .single();
+    if (sched) {
+      schedule = {
+        id: sched.id,
+        cadence: sched.cadence as Cadence,
+        next_run_at: sched.next_run_at,
+        enabled: sched.enabled,
+      };
+    }
+  }
 
   const { data: options } = await supabase
     .from("options")
@@ -40,6 +66,10 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
         <h1 className="font-bold truncate">{parsed?.intent ?? req.prompt}</h1>
         <div className="w-10" />
       </header>
+
+      <section className="mb-4">
+        <ScheduleControls requestId={req.id} schedule={schedule} />
+      </section>
 
       <section className="card">
         <div className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Share link</div>

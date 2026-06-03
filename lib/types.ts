@@ -24,6 +24,22 @@ export type Weekday =
 
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "any";
 
+export type Cadence = "weekly" | "monthly" | "quarterly";
+
+export type Schedule = {
+  id: string;
+  user_id: string;
+  prompt: string;
+  parsed: ParsedPrompt;
+  cadence: Cadence;
+  next_run_at: string;
+  last_run_at: string | null;
+  enabled: boolean;
+  origin_request_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type GeneratedOption = {
   starts_at: string;                              // ISO datetime
   ends_at: string;                                // ISO datetime

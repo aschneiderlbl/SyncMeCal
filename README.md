@@ -38,20 +38,34 @@ A scheduling app for dads in their late 30s. Type what you want to schedule in p
 
 1. Get an API key from [console.anthropic.com](https://console.anthropic.com).
 
-### 4. Local env
+### 4. Resend (for recurring-run emails)
+
+1. Create an account at [resend.com](https://resend.com).
+2. Add and verify your sending domain (or use `onboarding@resend.dev` for testing).
+3. Copy the API key into `RESEND_API_KEY`. Set `RESEND_FROM_EMAIL` to a verified `From` address.
+
+### 5. Cron secret
+
+Generate a long random string (e.g. `openssl rand -hex 32`) and put it in `CRON_SECRET`. Set the same value in Vercel project env vars — Vercel Cron sends it as `Authorization: Bearer ${CRON_SECRET}` to `/api/cron/run-schedules`.
+
+### 6. Local env
 
 ```bash
 cp .env.local.example .env.local
-# fill in the values from steps 1–3
+# fill in the values from steps 1–5
 ```
 
-### 5. Install + run
+### 7. Install + run
 
 ```bash
 npm install
 npm run dev
 # → http://localhost:3000
 ```
+
+### 8. Apply the schedules migration
+
+After the initial `0001_init.sql`, also run `supabase/migrations/0002_schedules.sql` in the Supabase SQL editor to add the `schedules` table + `schedule_id` column on `requests`.
 
 ## Project layout
 

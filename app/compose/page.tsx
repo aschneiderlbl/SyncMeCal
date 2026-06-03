@@ -3,7 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { GeneratedOption, ParsedPrompt } from "@/lib/types";
+import type { Cadence, GeneratedOption, ParsedPrompt } from "@/lib/types";
+
+type CadenceChoice = "none" | Cadence;
+
+const CADENCE_OPTIONS: { value: CadenceChoice; label: string }[] = [
+  { value: "none", label: "One-off" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+];
 
 const EXAMPLES = [
   { emoji: "☕", text: "Find coffee with Tony this summer" },
@@ -21,6 +30,7 @@ export default function ComposePage() {
   const [parsed, setParsed] = useState<ParsedPrompt | null>(null);
   const [options, setOptions] = useState<GeneratedOption[]>([]);
   const [saving, setSaving] = useState(false);
+  const [cadence, setCadence] = useState<CadenceChoice>("none");
 
   async function chartCourse() {
     if (!prompt.trim()) return;
@@ -58,6 +68,20 @@ export default function ComposePage() {
       });
       const json = await r.json();
       if (!r.ok) throw new Error(json.error ?? "Failed to save");
+
+      // If the user chose a cadence, also create a recurring schedule.
+      if (cadence !== "none") {
+        const sr = await fetch("/api/schedules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ request_id: json.id, cadence }),
+        });
+        if (!sr.ok) {
+          const sj = await sr.json().catch(() => ({}));
+          throw new Error(sj.error ?? "Failed to create schedule");
+        }
+      }
+
       router.push(`/requests/${json.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -164,6 +188,29 @@ export default function ComposePage() {
                     </div>
                   </div>
                 </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="mt-6">
+            <h3 className="font-semibold mb-2">Repeat</h3>
+            <p className="text-sm text-ink-secondary">
+              Re-run this prompt automatically and email you fresh times.
+            </p>
+            <div className="grid grid-cols-2 gap-2 mt-3 sm:grid-cols-4">
+              {CADENCE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setCadence(opt.value)}
+                  className={`card text-sm font-medium text-center ${
+                    cadence === opt.value
+                      ? "!border-primary !bg-cta-light"
+                      : ""
+                  }`}
+                >
+                  {opt.label}
+                </button>
               ))}
             </div>
           </section>
