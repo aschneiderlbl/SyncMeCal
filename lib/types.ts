@@ -16,6 +16,10 @@ export type ParsedPrompt = {
   date_range_end: string;                         // ISO date "YYYY-MM-DD"
   preferred_days: Weekday[];                      // [] = any
   preferred_time_of_day: TimeOfDay;               // "morning" | "afternoon" | "evening" | "any"
+  // If the prompt names an exact start time (e.g. "at 8am", "at 2:30 PM"),
+  // this holds it as decimal hours in the user's tz (8 = 8:00, 8.5 = 8:30).
+  // null when no specific time is given.
+  preferred_start_hour: number | null;
   location_hint: string | null;                   // free text or null
 };
 

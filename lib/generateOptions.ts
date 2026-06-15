@@ -92,7 +92,12 @@ export function generateOptions(
   const duration = parsed.duration_minutes * 60_000;
   const durationHours = parsed.duration_minutes / 60;
 
-  const [winStart, winEnd] = TIME_WINDOWS[parsed.preferred_time_of_day];
+  // If the prompt named an exact start time, lock the sweep to that single
+  // hour. Otherwise sweep the preferred time-of-day window.
+  const tod = TIME_WINDOWS[parsed.preferred_time_of_day];
+  const explicit = parsed.preferred_start_hour;
+  const [winStart, winEnd]: [number, number] =
+    explicit != null ? [explicit, explicit] : tod;
   const allowedDays = new Set(parsed.preferred_days.map((d) => WEEKDAY_INDEX[d]));
 
   const busyRanges = busy
@@ -115,12 +120,16 @@ export function generateOptions(
 
     for (let hour = winStart; hour <= winEnd; hour += 0.25) {
       const endHourLocal = hour + durationHours;
-      if (endHourLocal > winEnd + 0.5) break;
 
-      // Don't book straight through lunch.
-      const startsBeforeNoon = hour < 12;
-      const endsAfter1pm = endHourLocal >= 13;
-      if (startsBeforeNoon && endsAfter1pm) continue;
+      // The window-end and lunch rules are soft preferences — only apply them
+      // when the prompt didn't give a specific time. If the user said "at 8am",
+      // honor 8am even if it bleeds past the morning window or over lunch.
+      if (explicit == null) {
+        if (endHourLocal > winEnd + 0.5) break;
+        const startsBeforeNoon = hour < 12;
+        const endsAfter1pm = endHourLocal >= 13;
+        if (startsBeforeNoon && endsAfter1pm) continue;
+      }
 
       const hh = Math.floor(hour);
       const mm = Math.round((hour % 1) * 60);

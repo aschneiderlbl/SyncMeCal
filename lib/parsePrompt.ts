@@ -14,6 +14,7 @@ const ParsedSchema = z.object({
     )
     .default([]),
   preferred_time_of_day: z.enum(["morning","afternoon","evening","any"]).default("any"),
+  preferred_start_hour: z.number().min(0).max(23.99).nullable().default(null),
   location_hint: z.string().nullable().default(null),
 });
 
@@ -35,6 +36,8 @@ Rules:
     default → 45
 - preferred_days are lowercased weekday names. Empty = any.
 - preferred_time_of_day: morning (06–11), afternoon (12–17), evening (17–21), any.
+- preferred_start_hour: if the prompt names an EXACT start time ("at 8am", "starting at 2pm", "at 8:30"),
+  return it as decimal hours in 24h (8am = 8, 2pm = 14, 8:30am = 8.5). Otherwise null.
 - intent is a short human-readable summary like "Coffee with Tony".
 - participants is just first names extracted from the prompt (excluding the user).
 `;
@@ -63,6 +66,7 @@ Return ONLY a JSON object with this exact shape (no prose, no markdown):
   "date_range_end": "YYYY-MM-DD",
   "preferred_days": ["friday"],
   "preferred_time_of_day": "morning",
+  "preferred_start_hour": null,
   "location_hint": null
 }`,
       },
