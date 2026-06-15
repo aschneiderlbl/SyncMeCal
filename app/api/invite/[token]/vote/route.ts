@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createSupabaseService } from "@/lib/supabase/server";
+import { sendAyeNotificationEmail } from "@/lib/email";
+import type { ParsedPrompt } from "@/lib/types";
 
 const BodySchema = z.object({
   option_id: z.string().uuid().nullable(),       // null = rough_seas without a target option
@@ -37,7 +39,7 @@ export async function POST(
 
   const { data: request, error: reqErr } = await svc
     .from("requests")
-    .select("id, status, scheduled_option_id")
+    .select("id, user_id, prompt, parsed, status, scheduled_option_id")
     .eq("share_token", params.token)
     .single();
 
@@ -87,6 +89,42 @@ export async function POST(
       .from("requests")
       .update({ status: "anchor_dropped", scheduled_option_id: body.data.option_id })
       .eq("id", request.id);
+
+    // Notify the captain that a matey picked a time. Best-effort — never block
+    // the vote response on an email provider hiccup.
+    try {
+      const [{ data: profile }, { data: opt }] = await Promise.all([
+        svc
+          .from("profiles")
+          .select("email, display_name")
+          .eq("id", request.user_id)
+          .single(),
+        svc
+          .from("options")
+          .select("starts_at, label")
+          .eq("id", body.data.option_id)
+          .single(),
+      ]);
+
+      if (profile?.email && opt) {
+        const parsed = (request.parsed as ParsedPrompt | null) ?? null;
+        const intent = parsed?.intent ?? request.prompt;
+        const appUrl =
+          process.env.NEXT_PUBLIC_APP_URL ?? new URL(req.url).origin;
+        await sendAyeNotificationEmail({
+          to: profile.email,
+          toName: profile.display_name,
+          intent,
+          voterName: body.data.voter_name,
+          voterEmail: body.data.voter_email ?? null,
+          optionLabel: opt.label,
+          optionStartsAt: opt.starts_at,
+          requestUrl: `${appUrl}/requests/${request.id}`,
+        });
+      }
+    } catch (e) {
+      console.error("[vote] aye notification email failed", e);
+    }
   }
 
   return NextResponse.json({ ok: true });

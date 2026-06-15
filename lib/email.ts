@@ -107,6 +107,93 @@ export async function sendProposalEmail(args: {
   return { ok: true };
 }
 
+/**
+ * Notify the request creator (captain) that a matey voted Aye on a slot.
+ * Fires from the public vote route; failure is non-fatal so the vote still
+ * persists if the email provider is down.
+ */
+export async function sendAyeNotificationEmail(args: {
+  to: string;
+  toName?: string | null;
+  intent: string;
+  voterName: string;
+  voterEmail?: string | null;
+  optionLabel: string | null;
+  optionStartsAt: string;
+  requestUrl: string;
+  userTz?: string;
+}): Promise<{ ok: true } | { skipped: true; reason: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from =
+    process.env.RESEND_FROM_EMAIL ?? "Cap'n Cal <onboarding@resend.dev>";
+  if (!apiKey) {
+    console.warn("[email] RESEND_API_KEY not set — skipping aye notice to", args.to);
+    return { skipped: true, reason: "no_api_key" };
+  }
+
+  const { to, intent, voterName, voterEmail, optionLabel, optionStartsAt, requestUrl } = args;
+  const tz = args.userTz ?? "UTC";
+  const whenLine =
+    optionLabel ??
+    new Date(optionStartsAt).toLocaleString("en-US", {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+  const heading = `${voterName} called Aye Aye on "${intent}"`;
+  const body = `They picked: ${whenLine}.`;
+  const contact = voterEmail ? `Reply: ${voterEmail}` : null;
+
+  const text = [
+    heading,
+    "",
+    body,
+    contact ?? "",
+    "",
+    `Open request: ${requestUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;color:#1F2937;line-height:1.5;max-width:560px;margin:0 auto;padding:16px;">
+      <h2 style="margin:0 0 12px;font-size:18px;">${escapeHtml(heading)}</h2>
+      <p style="margin:0 0 12px;">${escapeHtml(body)}</p>
+      ${
+        contact
+          ? `<p style="margin:0 0 12px;color:#6B7280;font-size:14px;">${escapeHtml(contact)}</p>`
+          : ""
+      }
+      <p style="margin:16px 0 0;">
+        <a href="${escapeAttr(requestUrl)}" style="color:#2563EB;text-decoration:none;font-weight:600;">
+          Open request →
+        </a>
+      </p>
+    </div>
+  `;
+
+  const subject = `⚓ ${voterName} anchored "${intent}"`;
+
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ from, to: [to], subject, text, html }),
+  });
+
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`resend_failed: ${resp.status} ${t.slice(0, 200)}`);
+  }
+  return { ok: true };
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => {
     switch (c) {
