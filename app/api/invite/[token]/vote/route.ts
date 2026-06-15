@@ -16,10 +16,13 @@ const BodySchema = z.object({
  *
  * Body: { option_id, voter_name, voter_email?, choice }
  *
- * Records a matey's vote. If choice='aye', we also flip the request to
- * status='anchor_dropped' (and store scheduled_option_id) — first-matey-wins
- * for now. See the "What's not built" section in the README for multi-matey
- * voting logic.
+ * Records a matey's vote. A matey can Aye Aye on multiple options — each
+ * (option_id, voter_name) pair is independently togglable: a second Aye on
+ * the same option removes the vote. Rough Seas is a per-vote insert as well
+ * (the matey is signaling "none of these work").
+ *
+ * Anchoring is now a separate explicit action by the captain — see
+ * /api/requests/[id]/anchor. Once anchored, new votes are rejected.
  *
  * Uses service-role since the matey isn't authenticated.
  */
@@ -71,7 +74,25 @@ export async function POST(
     }
   }
 
-  // Insert the vote.
+  // Toggle behavior for Aye: if this matey already aye'd this option, remove
+  // the vote. Otherwise insert it.
+  if (body.data.choice === "aye" && body.data.option_id) {
+    const { data: existing } = await svc
+      .from("votes")
+      .select("id")
+      .eq("request_id", request.id)
+      .eq("option_id", body.data.option_id)
+      .eq("voter_name", body.data.voter_name)
+      .eq("choice", "aye")
+      .maybeSingle();
+
+    if (existing) {
+      await svc.from("votes").delete().eq("id", existing.id);
+      return NextResponse.json({ ok: true, action: "removed" });
+    }
+  }
+
+  // Insert the vote (Aye or Rough Seas).
   const { error: voteErr } = await svc.from("votes").insert({
     request_id: request.id,
     option_id: body.data.option_id,
@@ -83,15 +104,8 @@ export async function POST(
     return NextResponse.json({ error: voteErr.message }, { status: 500 });
   }
 
-  // First Aye drops the anchor.
+  // Notify the captain of new Ayes (best-effort).
   if (body.data.choice === "aye" && body.data.option_id) {
-    await svc
-      .from("requests")
-      .update({ status: "anchor_dropped", scheduled_option_id: body.data.option_id })
-      .eq("id", request.id);
-
-    // Notify the captain that a matey picked a time. Best-effort — never block
-    // the vote response on an email provider hiccup.
     try {
       const [{ data: profile }, { data: opt }] = await Promise.all([
         svc
@@ -127,5 +141,5 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, action: "added" });
 }

@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { CopyButtonClient } from "@/components/CopyButtonClient";
 import { ScheduleControls } from "@/components/ScheduleControls";
+import { AnchorButton } from "@/components/AnchorButton";
 import type { Cadence } from "@/lib/types";
 
 export default async function RequestDetailPage({ params }: { params: { id: string } }) {
@@ -105,11 +106,22 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                     {new Date(o.starts_at).toLocaleString()}
                   </div>
                 </div>
-                {isAnchor ? (
-                  <span className="pill pill-green">⚓ Anchor dropped</span>
-                ) : ayes.length > 0 ? (
-                  <span className="pill pill-green">{ayes.length} aye</span>
-                ) : null}
+                <div className="flex flex-col items-end gap-1">
+                  {isAnchor ? (
+                    <span className="pill pill-green">⚓ Anchor dropped</span>
+                  ) : ayes.length > 0 ? (
+                    <span className="pill pill-green">
+                      {ayes.length} aye{ayes.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                  {req.status !== "cancelled" && (
+                    <AnchorButton
+                      requestId={req.id}
+                      optionId={o.id}
+                      variant={isAnchor ? "unanchor" : "anchor"}
+                    />
+                  )}
+                </div>
               </li>
             );
           })}

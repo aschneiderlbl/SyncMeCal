@@ -65,5 +65,7 @@ export type InvitePublicPayload = {
     ends_at: string;
     label: string | null;
     position: number;
+    aye_count: number;          // total ayes on this option (social proof)
+    aye_voter_names: string[];  // first names of mateys who aye'd
   }>;
 };

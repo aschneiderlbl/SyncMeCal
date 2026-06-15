@@ -31,6 +31,21 @@ export async function GET(
     .eq("request_id", req.id)
     .order("position");
 
+  // Pull Aye votes for the social-proof counts on the Fleet Board.
+  const { data: ayes } = await svc
+    .from("votes")
+    .select("option_id, voter_name")
+    .eq("request_id", req.id)
+    .eq("choice", "aye");
+
+  const ayesByOption = new Map<string, string[]>();
+  for (const v of ayes ?? []) {
+    if (!v.option_id) continue;
+    const arr = ayesByOption.get(v.option_id) ?? [];
+    arr.push(v.voter_name);
+    ayesByOption.set(v.option_id, arr);
+  }
+
   const { data: profile } = await svc
     .from("profiles")
     .select("display_name")
@@ -48,13 +63,18 @@ export async function GET(
       status: req.status,
       scheduled_option_id: req.scheduled_option_id,
     },
-    options: (options ?? []).map((o) => ({
-      id: o.id,
-      starts_at: o.starts_at,
-      ends_at: o.ends_at,
-      label: o.label,
-      position: o.position,
-    })),
+    options: (options ?? []).map((o) => {
+      const names = ayesByOption.get(o.id) ?? [];
+      return {
+        id: o.id,
+        starts_at: o.starts_at,
+        ends_at: o.ends_at,
+        label: o.label,
+        position: o.position,
+        aye_count: names.length,
+        aye_voter_names: names,
+      };
+    }),
   };
 
   return NextResponse.json(payload);

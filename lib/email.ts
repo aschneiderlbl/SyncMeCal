@@ -144,8 +144,8 @@ export async function sendAyeNotificationEmail(args: {
       minute: "2-digit",
     });
 
-  const heading = `${voterName} called Aye Aye on "${intent}"`;
-  const body = `They picked: ${whenLine}.`;
+  const heading = `${voterName} voted Aye Aye on "${intent}"`;
+  const body = `Their pick: ${whenLine}. Anchor it from the request page when you're ready.`;
   const contact = voterEmail ? `Reply: ${voterEmail}` : null;
 
   const text = [
@@ -176,7 +176,7 @@ export async function sendAyeNotificationEmail(args: {
     </div>
   `;
 
-  const subject = `⚓ ${voterName} anchored "${intent}"`;
+  const subject = `${voterName} voted Aye on "${intent}"`;
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
