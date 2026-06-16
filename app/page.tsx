@@ -34,11 +34,22 @@ export default async function HomePage() {
             <h1 className="text-xl font-bold leading-tight">{firstName}</h1>
           </div>
         </div>
-        <form action="/auth/signout" method="post">
-          <button className="text-sm text-ink-secondary hover:text-primary" type="submit">
-            Sign out
-          </button>
-        </form>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/schedules"
+            className="text-sm text-ink-secondary hover:text-primary"
+          >
+            🔁 Recurring
+          </Link>
+          <form action="/auth/signout" method="post">
+            <button
+              className="text-sm text-ink-secondary hover:text-primary"
+              type="submit"
+            >
+              Sign out
+            </button>
+          </form>
+        </div>
       </header>
 
       {/* Compose prompt hero */}
