@@ -22,10 +22,16 @@ const SYSTEM_PROMPT = `You extract structured scheduling rules from informal pro
 Today is {today}. Always return JSON matching the provided schema exactly.
 
 Rules:
-- If a date range is vague ("this summer", "next week"), interpret it relative to today.
-  "summer" = Jun 1–Aug 31 of the current/next year.
+- If a date range is vague, interpret it relative to today. Use the nearest
+  upcoming instance — if today is June, "fall" means this Sep–Nov, not next year.
+  "spring" = Mar 1–May 31.
+  "summer" = Jun 1–Aug 31.
+  "fall" or "autumn" = Sep 1–Nov 30.
+  "winter" = Dec 1–Feb 28.
+  "Q1/Q2/Q3/Q4" = the nearest upcoming calendar quarter.
   "next week" = the upcoming Mon–Fri.
   "this month" = today through the last day of the month.
+  "next month" = the full following calendar month.
 - If no duration is given:
     coffee → 45
     lunch → 60

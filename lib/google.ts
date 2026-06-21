@@ -61,6 +61,12 @@ export type FreeBusyWindow = { start: string; end: string };
 // Google's freebusy endpoint accepts at most 50 calendar items per request.
 const FREEBUSY_BATCH_SIZE = 50;
 
+// Google's freebusy endpoint also caps a single query at roughly 90 days
+// (timeMax - timeMin). Chunk longer ranges so prompts like "in the fall"
+// (which can span >3 months) still work.
+const FREEBUSY_MAX_DAYS_PER_QUERY = 60;
+const MS_PER_DAY = 86_400_000;
+
 /**
  * Enumerate the user's calendars and return the IDs we want to factor into
  * availability. We include everything in their calendar list EXCEPT calendars
@@ -118,27 +124,45 @@ export async function getFreeBusy(
   type RawBusy = { start?: string | null; end?: string | null };
   const merged: FreeBusyWindow[] = [];
 
-  // FreeBusy accepts up to 50 calendars per request — batch if needed.
-  for (let i = 0; i < calendarIds.length; i += FREEBUSY_BATCH_SIZE) {
-    const batch = calendarIds.slice(i, i + FREEBUSY_BATCH_SIZE);
-    const resp = await calendar.freebusy.query({
-      requestBody: {
-        timeMin: timeMin.toISOString(),
-        timeMax: timeMax.toISOString(),
-        items: batch.map((id) => ({ id })),
-      },
-    });
+  // Split the requested range into ≤60-day windows so we stay well under
+  // Google's FreeBusy per-query cap (~3 months). Each window is queried
+  // independently across all calendar batches.
+  const windows: { from: Date; to: Date }[] = [];
+  for (
+    let t = timeMin.getTime();
+    t < timeMax.getTime();
+    t += FREEBUSY_MAX_DAYS_PER_QUERY * MS_PER_DAY
+  ) {
+    const from = new Date(t);
+    const to = new Date(
+      Math.min(t + FREEBUSY_MAX_DAYS_PER_QUERY * MS_PER_DAY, timeMax.getTime()),
+    );
+    windows.push({ from, to });
+  }
 
-    const calendars = resp.data.calendars ?? {};
-    for (const id of batch) {
-      const entry = calendars[id];
-      if (!entry) continue;
-      // Per-calendar errors (e.g. notFound) are surfaced here — skip silently so
-      // one bad calendar doesn't blow up the whole availability check.
-      if (entry.errors && entry.errors.length > 0) continue;
-      const busy: RawBusy[] = entry.busy ?? [];
-      for (const b of busy) {
-        if (b.start && b.end) merged.push({ start: b.start, end: b.end });
+  for (const win of windows) {
+    // FreeBusy accepts up to 50 calendars per request — batch if needed.
+    for (let i = 0; i < calendarIds.length; i += FREEBUSY_BATCH_SIZE) {
+      const batch = calendarIds.slice(i, i + FREEBUSY_BATCH_SIZE);
+      const resp = await calendar.freebusy.query({
+        requestBody: {
+          timeMin: win.from.toISOString(),
+          timeMax: win.to.toISOString(),
+          items: batch.map((id) => ({ id })),
+        },
+      });
+
+      const calendars = resp.data.calendars ?? {};
+      for (const id of batch) {
+        const entry = calendars[id];
+        if (!entry) continue;
+        // Per-calendar errors (e.g. notFound) are surfaced here — skip silently
+        // so one bad calendar doesn't blow up the whole availability check.
+        if (entry.errors && entry.errors.length > 0) continue;
+        const busy: RawBusy[] = entry.busy ?? [];
+        for (const b of busy) {
+          if (b.start && b.end) merged.push({ start: b.start, end: b.end });
+        }
       }
     }
   }
