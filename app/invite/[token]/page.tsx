@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { InvitePublicPayload } from "@/lib/types";
 
 type Status =
@@ -282,7 +282,13 @@ export default function InvitePage({ params }: { params: { token: string } }) {
 
   const canSave =
     voterName.trim().length > 0 && (roughSeas || picks.size > 0);
-  const summary = useSummaryLine(picks.size, roughSeas);
+  // Inline summary — `useMemo` here would be a hook called after the conditional
+  // early returns above, which violates the Rules of Hooks and crashes.
+  const summary = roughSeas
+    ? "🌊 Send rough seas"
+    : picks.size === 0
+      ? "Pick at least one time"
+      : `✅ Save ${picks.size} ${picks.size === 1 ? "pick" : "picks"}`;
 
   return (
     <main className="min-h-screen max-w-2xl mx-auto p-6 pb-44">
@@ -431,10 +437,3 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   );
 }
 
-function useSummaryLine(pickCount: number, roughSeas: boolean): string {
-  return useMemo(() => {
-    if (roughSeas) return "🌊 Send rough seas";
-    if (pickCount === 0) return "Pick at least one time";
-    return `✅ Save ${pickCount} ${pickCount === 1 ? "pick" : "picks"}`;
-  }, [pickCount, roughSeas]);
-}
