@@ -1,38 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { InvitePublicPayload } from "@/lib/types";
 
 type Status =
   | "loading"
   | "ready"
-  | "name_prompt"
-  | "submitting"
+  | "saving"
   | "anchored"
   | "done"
-  | "rough_seas"
+  | "rough_seas_done"
   | "error";
 
 const NAME_STORAGE_KEY = "syncmecal:matey_name";
 const EMAIL_STORAGE_KEY = "syncmecal:matey_email";
 
+/**
+ * Matey-facing invite page.
+ *
+ * Flow:
+ *   1. Tap any options that work — toggled in local state only, nothing posted.
+ *   2. Or tap "None of these work" to switch to rough-seas mode.
+ *   3. Enter name + (optional) email.
+ *   4. Hit Save — one POST to /api/invite/[token]/picks reconciles all picks.
+ */
 export default function InvitePage({ params }: { params: { token: string } }) {
   const [data, setData] = useState<InvitePublicPayload | null>(null);
   const [status, setStatus] = useState<Status>("loading");
-  const [pendingOptionId, setPendingOptionId] = useState<string | null>(null);
-  const [pendingChoice, setPendingChoice] = useState<"aye" | "rough_seas">("aye");
-  const [voterName, setVoterName] = useState("");
-  const [voterEmail, setVoterEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [anchoredOption, setAnchoredOption] = useState<string | null>(null);
 
-  // Restore name + email from localStorage so repeat visits feel quick.
+  // Pick state — entirely client-side until Save.
+  const [picks, setPicks] = useState<Set<string>>(new Set());
+  const [roughSeas, setRoughSeas] = useState(false);
+
+  const [voterName, setVoterName] = useState("");
+  const [voterEmail, setVoterEmail] = useState("");
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const n = window.localStorage.getItem(NAME_STORAGE_KEY) ?? "";
-    const e = window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? "";
-    setVoterName(n);
-    setVoterEmail(e);
+    setVoterName(window.localStorage.getItem(NAME_STORAGE_KEY) ?? "");
+    setVoterEmail(window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? "");
   }, []);
 
   const loadInvite = useCallback(async () => {
@@ -59,62 +67,78 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     })();
   }, [loadInvite]);
 
-  function persistName() {
-    if (typeof window === "undefined") return;
-    if (voterName.trim()) window.localStorage.setItem(NAME_STORAGE_KEY, voterName.trim());
-    if (voterEmail.trim()) window.localStorage.setItem(EMAIL_STORAGE_KEY, voterEmail.trim());
+  // When the saved name matches existing aye votes, pre-check those options so
+  // a returning matey sees what they previously picked.
+  useEffect(() => {
+    if (!data || !voterName.trim()) return;
+    const norm = voterName.trim().toLowerCase();
+    const mine = new Set<string>();
+    for (const o of data.options) {
+      if (o.aye_voter_names.some((n) => n.trim().toLowerCase() === norm)) {
+        mine.add(o.id);
+      }
+    }
+    if (mine.size > 0) {
+      setPicks(mine);
+      setRoughSeas(false);
+    }
+    // Only run on initial data load — don't fight the user as they toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.request?.id]);
+
+  function togglePick(optionId: string) {
+    setRoughSeas(false);
+    setPicks((prev) => {
+      const next = new Set(prev);
+      if (next.has(optionId)) next.delete(optionId);
+      else next.add(optionId);
+      return next;
+    });
   }
 
-  async function submitVote(choice: "aye" | "rough_seas", optionId: string | null) {
-    if (!voterName.trim()) {
-      setPendingOptionId(optionId);
-      setPendingChoice(choice);
-      setStatus("name_prompt");
-      return;
+  function toggleRoughSeas() {
+    setRoughSeas((prev) => {
+      const next = !prev;
+      if (next) setPicks(new Set()); // mutually exclusive with picks
+      return next;
+    });
+  }
+
+  async function save() {
+    if (!data) return;
+    if (!voterName.trim()) return;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(NAME_STORAGE_KEY, voterName.trim());
+      if (voterEmail.trim())
+        window.localStorage.setItem(EMAIL_STORAGE_KEY, voterEmail.trim());
     }
-    persistName();
-    setStatus("submitting");
+
+    setStatus("saving");
     setError(null);
     try {
-      const r = await fetch(`/api/invite/${params.token}/vote`, {
+      const body = roughSeas
+        ? {
+            voter_name: voterName.trim(),
+            voter_email: voterEmail.trim() || null,
+            mode: "rough_seas" as const,
+            option_ids: [] as string[],
+          }
+        : {
+            voter_name: voterName.trim(),
+            voter_email: voterEmail.trim() || null,
+            mode: "aye_list" as const,
+            option_ids: [...picks],
+          };
+
+      const r = await fetch(`/api/invite/${params.token}/picks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          option_id: optionId,
-          voter_name: voterName.trim(),
-          voter_email: voterEmail.trim() || null,
-          choice,
-        }),
+        body: JSON.stringify(body),
       });
       const json = await r.json();
-      if (!r.ok) throw new Error(json.error ?? "Vote failed");
+      if (!r.ok) throw new Error(json.error ?? "Save failed");
 
-      if (choice === "rough_seas") {
-        setStatus("rough_seas");
-        return;
-      }
-
-      // Trust the POST's returned voter list — no second GET (CDN cache risk).
-      if (
-        json.option_id &&
-        Array.isArray(json.aye_voter_names) &&
-        data
-      ) {
-        const nextOptions = data.options.map((o) =>
-          o.id === json.option_id
-            ? {
-                ...o,
-                aye_voter_names: json.aye_voter_names as string[],
-                aye_count:
-                  typeof json.aye_count === "number"
-                    ? json.aye_count
-                    : (json.aye_voter_names as string[]).length,
-              }
-            : o,
-        );
-        setData({ ...data, options: nextOptions });
-      }
-      setStatus("ready");
+      setStatus(roughSeas ? "rough_seas_done" : "done");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("ready");
@@ -141,7 +165,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     );
   }
 
-  // Anchor-dropped — captain has locked the meeting time.
+  // Captain has locked the meeting — show the chosen time.
   if (status === "anchored") {
     const anchored = data.options.find((o) => o.id === anchoredOption);
     return (
@@ -178,13 +202,9 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     );
   }
 
-  // Matey hit "Done" after picking their slots.
+  // Save succeeded — Aye list.
   if (status === "done") {
-    const myAyes = data.options.filter((o) =>
-      o.aye_voter_names.some(
-        (n) => n.trim().toLowerCase() === voterName.trim().toLowerCase(),
-      ),
-    );
+    const myAyes = data.options.filter((o) => picks.has(o.id));
     return (
       <main
         className="min-h-screen grid place-items-center p-6"
@@ -199,8 +219,8 @@ export default function InvitePage({ params }: { params: { token: string } }) {
             Picks sent!
           </h1>
           <p className="text-white/90 mt-2">
-            {data.request.captain_name} will pick the final time from the
-            options you marked.
+            {data.request.captain_name} will pick the final time from your
+            picks.
           </p>
           {myAyes.length > 0 && (
             <div className="card mt-6 text-left">
@@ -226,8 +246,8 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     );
   }
 
-  // Rough seas — declined
-  if (status === "rough_seas") {
+  // Save succeeded — rough seas.
+  if (status === "rough_seas_done") {
     return (
       <main
         className="min-h-screen grid place-items-center p-6"
@@ -245,20 +265,27 @@ export default function InvitePage({ params }: { params: { token: string } }) {
             We'll let {data.request.captain_name} know none of these times work.
             They'll chart a new course.
           </p>
+          <button
+            type="button"
+            onClick={() => {
+              setRoughSeas(false);
+              setStatus("ready");
+            }}
+            className="btn btn-secondary mt-6"
+          >
+            Change my mind
+          </button>
         </div>
       </main>
     );
   }
 
-  const askingName = status === "name_prompt";
-  const myNameNorm = voterName.trim().toLowerCase();
-  const isMine = (names: string[]) =>
-    !!myNameNorm && names.some((n) => n.trim().toLowerCase() === myNameNorm);
-  const myPickCount = data.options.filter((o) => isMine(o.aye_voter_names))
-    .length;
+  const canSave =
+    voterName.trim().length > 0 && (roughSeas || picks.size > 0);
+  const summary = useSummaryLine(picks.size, roughSeas);
 
   return (
-    <main className="min-h-screen max-w-2xl mx-auto p-6 pb-32">
+    <main className="min-h-screen max-w-2xl mx-auto p-6 pb-44">
       <div className="text-center mb-4">
         <div className="inline-flex items-center gap-2 bg-bg px-3 py-1 rounded-full text-xs text-ink-secondary mb-3">
           <span className="w-5 h-5 rounded-full bg-primary text-white grid place-items-center text-[10px] font-bold">
@@ -271,80 +298,42 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         </h1>
       </div>
 
-      {/* Prominent how-it-works card */}
+      {/* Instructions */}
       <div className="card mb-4 border-primary" style={{ background: "#EFF6FF" }}>
         <div className="text-xs font-bold text-primary uppercase tracking-wider mb-1">
           ✅ Check every time that works
         </div>
         <p className="text-sm">
           <strong>Pick as many as you can</strong> — the more options you mark,
-          the easier it is for {data.request.captain_name} to find a time that
-          works for everyone. They'll pick the final time.
+          the easier it is for {data.request.captain_name} to find a time. When
+          you're done, fill out your name below and save.
         </p>
-        {voterName.trim() && (
-          <div className="text-xs text-ink-secondary mt-2">
-            Voting as <strong>{voterName.trim()}</strong>
-            {myPickCount > 0 && <> · {myPickCount} picked so far</>}
-          </div>
-        )}
       </div>
 
-      {askingName && (
-        <div className="card mb-4 border-primary">
-          <div className="text-sm font-semibold mb-2">What's yer name, matey?</div>
-          <input
-            type="text"
-            value={voterName}
-            onChange={(e) => setVoterName(e.target.value)}
-            placeholder="e.g. Tony"
-            className="w-full p-3 rounded-xl border-2 border-border focus:border-primary outline-none text-sm"
-            autoFocus
-          />
-          <input
-            type="email"
-            value={voterEmail}
-            onChange={(e) => setVoterEmail(e.target.value)}
-            placeholder="Email (optional — for the cal invite)"
-            className="w-full p-3 mt-2 rounded-xl border-2 border-border focus:border-primary outline-none text-sm"
-          />
-          <button
-            type="button"
-            disabled={!voterName.trim()}
-            onClick={() => {
-              const opt = pendingOptionId;
-              const choice = pendingChoice;
-              setStatus("ready");
-              submitVote(choice, opt);
-            }}
-            className="btn btn-primary w-full mt-3"
-          >
-            {pendingChoice === "rough_seas"
-              ? "🌊 Send rough seas"
-              : "Save my pick"}
-          </button>
-        </div>
-      )}
-
-      {/* Option list with big visible checkboxes */}
+      {/* Options with checkboxes */}
       <div className="space-y-2">
         {data.options.map((o) => {
-          const mine = isMine(o.aye_voter_names);
+          const checked = picks.has(o.id);
+          const otherAyes = o.aye_voter_names.filter(
+            (n) =>
+              !voterName.trim() ||
+              n.trim().toLowerCase() !== voterName.trim().toLowerCase(),
+          );
           return (
             <button
               key={o.id}
               type="button"
-              onClick={() => submitVote("aye", o.id)}
-              disabled={status === "submitting"}
+              onClick={() => togglePick(o.id)}
+              disabled={status === "saving"}
               className={`w-full flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${
-                mine
+                checked
                   ? "border-cta bg-cta-light shadow-lift"
                   : "border-border bg-white hover:border-primary hover:-translate-y-0.5"
-              }`}
+              } ${roughSeas ? "opacity-40" : ""}`}
             >
-              {/* Big visual checkbox on the LEFT */}
               <div
                 className={`w-9 h-9 rounded-lg grid place-items-center border-2 flex-shrink-0 transition-all ${
-                  mine
+                  checked
                     ? "bg-cta border-cta text-white"
                     : "bg-white border-border text-transparent"
                 }`}
@@ -353,11 +342,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
               </div>
 
               <div className="flex-1 text-left min-w-0">
-                <div
-                  className={`font-semibold text-base ${mine ? "text-ink" : ""}`}
-                >
-                  {o.label}
-                </div>
+                <div className="font-semibold text-base">{o.label}</div>
                 <div className="text-xs text-ink-secondary mt-0.5">
                   {new Date(o.starts_at).toLocaleString([], {
                     weekday: "short",
@@ -367,51 +352,89 @@ export default function InvitePage({ params }: { params: { token: string } }) {
                     minute: "2-digit",
                   })}
                 </div>
-                {o.aye_count > 0 && (
+                {otherAyes.length > 0 && (
                   <div className="text-[11px] text-ink-secondary mt-1">
-                    {o.aye_count} {o.aye_count === 1 ? "matey" : "mateys"}:{" "}
-                    {o.aye_voter_names.join(", ")}
+                    {otherAyes.length}{" "}
+                    {otherAyes.length === 1 ? "matey" : "mateys"} already in:{" "}
+                    {otherAyes.join(", ")}
                   </div>
                 )}
               </div>
-
-              {mine && (
-                <span className="font-mono text-[10px] font-extrabold tracking-widest bg-cta text-white px-2 py-1 rounded flex-shrink-0">
-                  PICKED
-                </span>
-              )}
             </button>
           );
         })}
       </div>
 
-      {error && <div className="mt-3 text-sm text-danger">{error}</div>}
-
-      {/* Sticky bottom action bar — only shown when we have a name */}
-      {voterName.trim() && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border p-4 shadow-lg">
-          <div className="max-w-2xl mx-auto flex gap-2">
-            <button
-              type="button"
-              onClick={() => submitVote("rough_seas", null)}
-              disabled={status === "submitting"}
-              className="btn btn-secondary flex-1 text-sm"
-            >
-              🌊 None work
-            </button>
-            <button
-              type="button"
-              onClick={() => setStatus("done")}
-              disabled={status === "submitting" || myPickCount === 0}
-              className="btn btn-primary flex-[2] text-sm"
-            >
-              {myPickCount === 0
-                ? "Pick at least one"
-                : `✅ Done · ${myPickCount} picked`}
-            </button>
+      {/* Rough seas alternative */}
+      <button
+        type="button"
+        onClick={toggleRoughSeas}
+        disabled={status === "saving"}
+        className={`w-full flex items-center gap-3 p-3 mt-3 rounded-2xl border-2 transition-all ${
+          roughSeas
+            ? "border-danger bg-red-50"
+            : "border-border bg-white hover:border-danger"
+        }`}
+      >
+        <div
+          className={`w-9 h-9 rounded-lg grid place-items-center border-2 flex-shrink-0 ${
+            roughSeas
+              ? "bg-danger border-danger text-white"
+              : "bg-white border-border text-transparent"
+          }`}
+        >
+          <span className="text-xl font-extrabold leading-none">✓</span>
+        </div>
+        <div className="flex-1 text-left">
+          <div className="font-semibold text-sm">🌊 None of these work</div>
+          <div className="text-xs text-ink-secondary">
+            Tell {data.request.captain_name} to chart a new course.
           </div>
         </div>
-      )}
+      </button>
+
+      {/* Sticky save bar with name + email + button */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-border p-4 shadow-lg">
+        <div className="max-w-2xl mx-auto">
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <input
+              type="text"
+              value={voterName}
+              onChange={(e) => setVoterName(e.target.value)}
+              placeholder="Your name *"
+              className="p-3 rounded-xl border-2 border-border focus:border-primary outline-none text-sm"
+            />
+            <input
+              type="email"
+              value={voterEmail}
+              onChange={(e) => setVoterEmail(e.target.value)}
+              placeholder="Email (optional)"
+              className="p-3 rounded-xl border-2 border-border focus:border-primary outline-none text-sm"
+            />
+          </div>
+          {error && <div className="text-xs text-danger mb-2">{error}</div>}
+          <button
+            type="button"
+            onClick={save}
+            disabled={!canSave || status === "saving"}
+            className="btn btn-primary w-full text-sm"
+          >
+            {status === "saving"
+              ? "Saving…"
+              : !voterName.trim()
+                ? "Enter your name to save"
+                : summary}
+          </button>
+        </div>
+      </div>
     </main>
   );
+}
+
+function useSummaryLine(pickCount: number, roughSeas: boolean): string {
+  return useMemo(() => {
+    if (roughSeas) return "🌊 Send rough seas";
+    if (pickCount === 0) return "Pick at least one time";
+    return `✅ Save ${pickCount} ${pickCount === 1 ? "pick" : "picks"}`;
+  }, [pickCount, roughSeas]);
 }
