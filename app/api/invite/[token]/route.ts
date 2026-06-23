@@ -2,6 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseService } from "@/lib/supabase/server";
 import type { InvitePublicPayload } from "@/lib/types";
 
+// Always read live data so vote counts reflect the latest insert/delete and
+// don't snap back to a stale snapshot after a matey toggles their aye.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
  * GET /api/invite/[token]
  *

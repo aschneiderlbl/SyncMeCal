@@ -4,6 +4,8 @@ import { createSupabaseService } from "@/lib/supabase/server";
 import { sendAyeNotificationEmail } from "@/lib/email";
 import type { ParsedPrompt } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 const BodySchema = z.object({
   option_id: z.string().uuid().nullable(),       // null = rough_seas without a target option
   voter_name: z.string().min(1).max(80),

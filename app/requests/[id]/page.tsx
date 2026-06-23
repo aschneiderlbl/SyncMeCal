@@ -6,6 +6,10 @@ import { ScheduleControls } from "@/components/ScheduleControls";
 import { AnchorButton } from "@/components/AnchorButton";
 import type { Cadence } from "@/lib/types";
 
+// Always render fresh so vote counts reflect the latest invite activity.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function RequestDetailPage({ params }: { params: { id: string } }) {
   const supabase = createSupabaseServer();
   const { data: { user } } = await supabase.auth.getUser();

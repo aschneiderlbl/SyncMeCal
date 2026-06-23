@@ -38,7 +38,9 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   }, []);
 
   const loadInvite = useCallback(async () => {
-    const r = await fetch(`/api/invite/${params.token}`);
+    // no-store: never serve a cached invite payload, otherwise the user's own
+    // freshly-cast vote disappears on the next render and the toggle flaps.
+    const r = await fetch(`/api/invite/${params.token}`, { cache: "no-store" });
     const json = await r.json();
     if (!r.ok) throw new Error(json.error ?? "Failed to load");
     setData(json);
