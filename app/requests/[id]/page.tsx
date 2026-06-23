@@ -10,6 +10,66 @@ import type { Cadence } from "@/lib/types";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type VoteRow = {
+  id: string;
+  option_id: string | null;
+  voter_name: string;
+  choice: string;
+  created_at: string;
+};
+type OptionRow = {
+  id: string;
+  position: number;
+};
+type VoterGroup = {
+  voter_name: string;
+  aye_coords: string[];     // e.g. ["A1", "B2"]
+  rough_seas: boolean;
+  last_at: string;
+};
+
+/**
+ * Roll vote rows up by voter so the captain can scan "who picked what" at a
+ * glance instead of reading a flat chronological log.
+ */
+function groupVotesByVoter(
+  votes: VoteRow[],
+  options: OptionRow[],
+): VoterGroup[] {
+  const coordOf = new Map(
+    options.map((o, i) => [
+      o.id,
+      `${String.fromCharCode(65 + i)}${i + 1}`,
+    ]),
+  );
+
+  const byVoter = new Map<string, VoterGroup>();
+  for (const v of votes) {
+    const existing =
+      byVoter.get(v.voter_name) ?? {
+        voter_name: v.voter_name,
+        aye_coords: [],
+        rough_seas: false,
+        last_at: v.created_at,
+      };
+    if (v.choice === "aye" && v.option_id) {
+      const c = coordOf.get(v.option_id);
+      if (c && !existing.aye_coords.includes(c)) existing.aye_coords.push(c);
+    } else if (v.choice === "rough_seas") {
+      existing.rough_seas = true;
+    }
+    if (new Date(v.created_at) > new Date(existing.last_at)) {
+      existing.last_at = v.created_at;
+    }
+    byVoter.set(v.voter_name, existing);
+  }
+
+  // Sort by last activity, most recent first.
+  return Array.from(byVoter.values()).sort(
+    (a, b) => new Date(b.last_at).getTime() - new Date(a.last_at).getTime(),
+  );
+}
+
 export default async function RequestDetailPage({ params }: { params: { id: string } }) {
   const supabase = createSupabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -91,7 +151,10 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
         <h3 className="font-semibold mb-2">Proposed times</h3>
         <ul className="space-y-2">
           {options?.map((o, i) => {
-            const ayes = (votes ?? []).filter((v) => v.option_id === o.id && v.choice === "aye");
+            const ayes = (votes ?? []).filter(
+              (v) => v.option_id === o.id && v.choice === "aye",
+            );
+            const ayeNames = ayes.map((v) => v.voter_name);
             const isAnchor = req.scheduled_option_id === o.id;
             return (
               <li
@@ -109,6 +172,14 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                   <div className="text-xs text-ink-secondary">
                     {new Date(o.starts_at).toLocaleString()}
                   </div>
+                  {ayeNames.length > 0 && (
+                    <div className="text-xs text-ink-secondary mt-1">
+                      <span className="font-semibold text-primary">
+                        Ayes:
+                      </span>{" "}
+                      {ayeNames.join(", ")}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   {isAnchor ? (
@@ -135,23 +206,42 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
       <section className="mt-6">
         <h3 className="font-semibold mb-2">Mateys&apos; calls</h3>
         {!votes || votes.length === 0 ? (
-          <div className="card text-sm text-ink-secondary text-center py-6">No votes yet.</div>
+          <div className="card text-sm text-ink-secondary text-center py-6">
+            No votes yet.
+          </div>
         ) : (
           <ul className="space-y-2">
-            {votes.map((v) => (
-              <li key={v.id} className="card flex items-center gap-3 text-sm">
-                <div className="w-8 h-8 rounded-full bg-primary text-white grid place-items-center text-xs font-bold">
-                  {v.voter_name.charAt(0).toUpperCase()}
+            {groupVotesByVoter(votes, options ?? []).map((g) => (
+              <li key={g.voter_name} className="card text-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-primary text-white grid place-items-center text-xs font-bold">
+                    {g.voter_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold">{g.voter_name}</div>
+                    {g.aye_coords.length > 0 ? (
+                      <div className="text-xs text-ink-secondary mt-0.5">
+                        Aye'd:{" "}
+                        <span className="text-ink">
+                          {g.aye_coords.join(", ")}
+                        </span>
+                      </div>
+                    ) : null}
+                    {g.rough_seas && (
+                      <div className="text-xs text-amber-700 mt-0.5">
+                        Called Rough Seas
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-xs text-ink-secondary whitespace-nowrap">
+                    {new Date(g.last_at).toLocaleString([], {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <span className="font-semibold">{v.voter_name}</span>{" "}
-                  <span className="text-ink-secondary">
-                    {v.choice === "aye" ? "called Aye Aye" : "called Rough Seas"}
-                  </span>
-                </div>
-                <span className={v.choice === "aye" ? "pill pill-green" : "pill pill-amber"}>
-                  {v.choice === "aye" ? "Aye aye" : "Rough seas"}
-                </span>
               </li>
             ))}
           </ul>
