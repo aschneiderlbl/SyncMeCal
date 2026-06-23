@@ -9,18 +9,16 @@ type Status =
   | "name_prompt"
   | "submitting"
   | "anchored"
+  | "done"
   | "rough_seas"
   | "error";
 
-// Persist the matey's name across reloads so they can keep toggling without
-// re-typing it.
 const NAME_STORAGE_KEY = "syncmecal:matey_name";
 const EMAIL_STORAGE_KEY = "syncmecal:matey_email";
 
 export default function InvitePage({ params }: { params: { token: string } }) {
   const [data, setData] = useState<InvitePublicPayload | null>(null);
   const [status, setStatus] = useState<Status>("loading");
-  // Which option the matey is queueing up to Aye before they've given a name.
   const [pendingOptionId, setPendingOptionId] = useState<string | null>(null);
   const [pendingChoice, setPendingChoice] = useState<"aye" | "rough_seas">("aye");
   const [voterName, setVoterName] = useState("");
@@ -38,8 +36,6 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   }, []);
 
   const loadInvite = useCallback(async () => {
-    // no-store: never serve a cached invite payload, otherwise the user's own
-    // freshly-cast vote disappears on the next render and the toggle flaps.
     const r = await fetch(`/api/invite/${params.token}`, { cache: "no-store" });
     const json = await r.json();
     if (!r.ok) throw new Error(json.error ?? "Failed to load");
@@ -98,8 +94,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         return;
       }
 
-      // Aye toggle: trust the POST's returned voter list (avoids a second GET
-      // that Vercel's CDN was caching). Patch the affected option in place.
+      // Trust the POST's returned voter list — no second GET (CDN cache risk).
       if (
         json.option_id &&
         Array.isArray(json.aye_voter_names) &&
@@ -183,6 +178,54 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     );
   }
 
+  // Matey hit "Done" after picking their slots.
+  if (status === "done") {
+    const myAyes = data.options.filter((o) =>
+      o.aye_voter_names.some(
+        (n) => n.trim().toLowerCase() === voterName.trim().toLowerCase(),
+      ),
+    );
+    return (
+      <main
+        className="min-h-screen grid place-items-center p-6"
+        style={{
+          background:
+            "linear-gradient(180deg, #DBEAFE 0%, #93C5FD 30%, #3B82F6 65%, #1E3A8A 100%)",
+        }}
+      >
+        <div className="text-center max-w-sm">
+          <div className="text-6xl">⚓</div>
+          <h1 className="text-3xl font-extrabold text-white mt-4 drop-shadow">
+            Picks sent!
+          </h1>
+          <p className="text-white/90 mt-2">
+            {data.request.captain_name} will pick the final time from the
+            options you marked.
+          </p>
+          {myAyes.length > 0 && (
+            <div className="card mt-6 text-left">
+              <div className="text-xs font-bold text-primary uppercase tracking-wider mb-2">
+                Your picks
+              </div>
+              <ul className="space-y-1 text-sm">
+                {myAyes.map((o) => (
+                  <li key={o.id}>• {o.label}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setStatus("ready")}
+            className="btn btn-secondary mt-4 w-full"
+          >
+            Change my picks
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   // Rough seas — declined
   if (status === "rough_seas") {
     return (
@@ -207,38 +250,42 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     );
   }
 
-  // Name prompt overlay
   const askingName = status === "name_prompt";
-
-  // Compute "which options has THIS matey aye'd" by comparing names (no auth).
   const myNameNorm = voterName.trim().toLowerCase();
   const isMine = (names: string[]) =>
     !!myNameNorm && names.some((n) => n.trim().toLowerCase() === myNameNorm);
+  const myPickCount = data.options.filter((o) => isMine(o.aye_voter_names))
+    .length;
 
   return (
-    <main className="min-h-screen max-w-2xl mx-auto p-6 pb-24">
-      <div className="text-center mb-6">
+    <main className="min-h-screen max-w-2xl mx-auto p-6 pb-32">
+      <div className="text-center mb-4">
         <div className="inline-flex items-center gap-2 bg-bg px-3 py-1 rounded-full text-xs text-ink-secondary mb-3">
           <span className="w-5 h-5 rounded-full bg-primary text-white grid place-items-center text-[10px] font-bold">
             {data.request.captain_name.charAt(0).toUpperCase()}
           </span>
           Incoming from {data.request.captain_name}
         </div>
-        <div className="inline-block bg-primary-hover text-sun font-mono text-[10px] font-extrabold tracking-widest px-2 py-1 rounded">
-          ⚓ MATEY ORDERS
-        </div>
-        <h1 className="text-2xl font-bold mt-2">
+        <h1 className="text-2xl font-bold">
           {data.request.intent ?? data.request.prompt}
         </h1>
-        <p className="text-sm text-ink-secondary mt-1 max-w-sm mx-auto">
-          {data.request.captain_name}'s free windows. Tap every time that works
-          for ye — tap again to remove. {data.request.captain_name} picks the
-          final time.
+      </div>
+
+      {/* Prominent how-it-works card */}
+      <div className="card mb-4 border-primary" style={{ background: "#EFF6FF" }}>
+        <div className="text-xs font-bold text-primary uppercase tracking-wider mb-1">
+          ✅ Check every time that works
+        </div>
+        <p className="text-sm">
+          <strong>Pick as many as you can</strong> — the more options you mark,
+          the easier it is for {data.request.captain_name} to find a time that
+          works for everyone. They'll pick the final time.
         </p>
         {voterName.trim() && (
-          <p className="text-xs text-ink-secondary mt-2">
+          <div className="text-xs text-ink-secondary mt-2">
             Voting as <strong>{voterName.trim()}</strong>
-          </p>
+            {myPickCount > 0 && <> · {myPickCount} picked so far</>}
+          </div>
         )}
       </div>
 
@@ -273,23 +320,14 @@ export default function InvitePage({ params }: { params: { token: string } }) {
           >
             {pendingChoice === "rough_seas"
               ? "🌊 Send rough seas"
-              : "⚓ Drop anchor"}
+              : "Save my pick"}
           </button>
         </div>
       )}
 
-      <div
-        className="rounded-2xl border-2 border-sky relative p-3"
-        style={{
-          background: "linear-gradient(180deg, #F0F9FF 0%, #E0F2FE 100%)",
-        }}
-      >
-        <div className="absolute -top-3 left-3 bg-[#0EA5E9] text-white text-[10px] font-extrabold tracking-widest px-2 py-1 rounded font-mono">
-          FLEET BOARD
-        </div>
-
-        {data.options.map((o, i) => {
-          const coord = `${String.fromCharCode(65 + i)}${i + 1}`;
+      {/* Option list with big visible checkboxes */}
+      <div className="space-y-2">
+        {data.options.map((o) => {
           const mine = isMine(o.aye_voter_names);
           return (
             <button
@@ -297,36 +335,51 @@ export default function InvitePage({ params }: { params: { token: string } }) {
               type="button"
               onClick={() => submitVote("aye", o.id)}
               disabled={status === "submitting"}
-              className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 mb-2 last:mb-0 transition-all ${
+              className={`w-full flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${
                 mine
-                  ? "border-danger bg-red-50"
-                  : "border-sky bg-white hover:border-danger hover:-translate-y-0.5 hover:shadow-lift"
+                  ? "border-cta bg-cta-light shadow-lift"
+                  : "border-border bg-white hover:border-primary hover:-translate-y-0.5"
               }`}
             >
-              <div className="w-11 h-11 rounded-lg bg-[#0EA5E9] text-white grid place-items-center font-extrabold font-mono">
-                {coord}
+              {/* Big visual checkbox on the LEFT */}
+              <div
+                className={`w-9 h-9 rounded-lg grid place-items-center border-2 flex-shrink-0 transition-all ${
+                  mine
+                    ? "bg-cta border-cta text-white"
+                    : "bg-white border-border text-transparent"
+                }`}
+              >
+                <span className="text-xl font-extrabold leading-none">✓</span>
               </div>
-              <div className="flex-1 text-left">
-                <div className="font-semibold text-sm">{o.label}</div>
-                <div className="text-xs text-ink-secondary">
-                  {new Date(o.starts_at).toLocaleString()}
+
+              <div className="flex-1 text-left min-w-0">
+                <div
+                  className={`font-semibold text-base ${mine ? "text-ink" : ""}`}
+                >
+                  {o.label}
+                </div>
+                <div className="text-xs text-ink-secondary mt-0.5">
+                  {new Date(o.starts_at).toLocaleString([], {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
                 </div>
                 {o.aye_count > 0 && (
                   <div className="text-[11px] text-ink-secondary mt-1">
-                    {o.aye_count} aye{o.aye_count === 1 ? "" : "s"}
-                    {o.aye_voter_names.length > 0 && (
-                      <> · {o.aye_voter_names.join(", ")}</>
-                    )}
+                    {o.aye_count} {o.aye_count === 1 ? "matey" : "mateys"}:{" "}
+                    {o.aye_voter_names.join(", ")}
                   </div>
                 )}
               </div>
-              <span
-                className={`font-mono text-[10px] font-extrabold tracking-widest px-2 py-1 rounded ${
-                  mine ? "bg-ink text-white" : "bg-danger text-white"
-                }`}
-              >
-                {mine ? "AYE'D ✓" : "AYE AYE"}
-              </span>
+
+              {mine && (
+                <span className="font-mono text-[10px] font-extrabold tracking-widest bg-cta text-white px-2 py-1 rounded flex-shrink-0">
+                  PICKED
+                </span>
+              )}
             </button>
           );
         })}
@@ -334,19 +387,31 @@ export default function InvitePage({ params }: { params: { token: string } }) {
 
       {error && <div className="mt-3 text-sm text-danger">{error}</div>}
 
-      <button
-        type="button"
-        onClick={() => submitVote("rough_seas", null)}
-        disabled={status === "submitting"}
-        className="btn w-full mt-4 text-ink-secondary"
-      >
-        🌊 Rough seas — none of these work
-      </button>
-
-      <p className="text-center text-[11px] text-ink-secondary mt-6">
-        Powered by <span className="text-primary font-bold">SyncMeCal</span> ·
-        Sink the meeting, save the day.
-      </p>
+      {/* Sticky bottom action bar — only shown when we have a name */}
+      {voterName.trim() && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border p-4 shadow-lg">
+          <div className="max-w-2xl mx-auto flex gap-2">
+            <button
+              type="button"
+              onClick={() => submitVote("rough_seas", null)}
+              disabled={status === "submitting"}
+              className="btn btn-secondary flex-1 text-sm"
+            >
+              🌊 None work
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatus("done")}
+              disabled={status === "submitting" || myPickCount === 0}
+              className="btn btn-primary flex-[2] text-sm"
+            >
+              {myPickCount === 0
+                ? "Pick at least one"
+                : `✅ Done · ${myPickCount} picked`}
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
