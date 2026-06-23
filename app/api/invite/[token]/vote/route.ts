@@ -90,7 +90,14 @@ export async function POST(
 
     if (existing) {
       await svc.from("votes").delete().eq("id", existing.id);
-      return NextResponse.json({ ok: true, action: "removed" });
+      const updated = await ayesFor(svc, request.id, body.data.option_id);
+      return NextResponse.json({
+        ok: true,
+        action: "removed",
+        option_id: body.data.option_id,
+        aye_voter_names: updated,
+        aye_count: updated.length,
+      });
     }
   }
 
@@ -143,5 +150,34 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ ok: true, action: "added" });
+  // Send back the freshest voter list for the affected option so the client
+  // can update its UI directly without a second roundtrip (which Vercel's CDN
+  // has been caching aggressively).
+  let updated: string[] = [];
+  if (body.data.option_id) {
+    updated = await ayesFor(svc, request.id, body.data.option_id);
+  }
+  return NextResponse.json({
+    ok: true,
+    action: "added",
+    option_id: body.data.option_id,
+    aye_voter_names: updated,
+    aye_count: updated.length,
+  });
+}
+
+type SvcClient = ReturnType<typeof createSupabaseService>;
+
+async function ayesFor(
+  svc: SvcClient,
+  requestId: string,
+  optionId: string,
+): Promise<string[]> {
+  const { data } = await svc
+    .from("votes")
+    .select("voter_name")
+    .eq("request_id", requestId)
+    .eq("option_id", optionId)
+    .eq("choice", "aye");
+  return (data ?? []).map((r) => r.voter_name);
 }

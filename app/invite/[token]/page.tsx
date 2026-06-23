@@ -97,8 +97,29 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         setStatus("rough_seas");
         return;
       }
-      // Aye toggle: re-pull the payload so counts and "my ayes" reflect truth.
-      await loadInvite();
+
+      // Aye toggle: trust the POST's returned voter list (avoids a second GET
+      // that Vercel's CDN was caching). Patch the affected option in place.
+      if (
+        json.option_id &&
+        Array.isArray(json.aye_voter_names) &&
+        data
+      ) {
+        const nextOptions = data.options.map((o) =>
+          o.id === json.option_id
+            ? {
+                ...o,
+                aye_voter_names: json.aye_voter_names as string[],
+                aye_count:
+                  typeof json.aye_count === "number"
+                    ? json.aye_count
+                    : (json.aye_voter_names as string[]).length,
+              }
+            : o,
+        );
+        setData({ ...data, options: nextOptions });
+      }
+      setStatus("ready");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("ready");
@@ -214,6 +235,11 @@ export default function InvitePage({ params }: { params: { token: string } }) {
           for ye — tap again to remove. {data.request.captain_name} picks the
           final time.
         </p>
+        {voterName.trim() && (
+          <p className="text-xs text-ink-secondary mt-2">
+            Voting as <strong>{voterName.trim()}</strong>
+          </p>
+        )}
       </div>
 
       {askingName && (
